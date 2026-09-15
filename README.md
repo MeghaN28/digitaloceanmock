@@ -19,6 +19,7 @@ The service is designed to support production-style concerns such as:
 - database-backed persistence
 - indexing for common query patterns
 - containerized deployment readiness
+- structured observability and health checks
 
 ## Business Requirements
 
@@ -62,6 +63,128 @@ Error responses follow a consistent structure:
   }
 }
 ```
+
+## Additional design considerations
+
+### Idempotency
+
+To prevent duplicate inserts when a client retries after a timeout, the API should accept an `event_id` and treat it as a unique idempotency key.
+
+Request example:
+
+```json
+{
+  "event_id": "evt-123",
+  "app_id": "app-123",
+  "environment": "production",
+  "metric": "request_count",
+  "value": 100,
+  "timestamp": "2026-09-15T16:30:00Z"
+}
+```
+
+Database schema idea:
+
+```sql
+metrics
+--------------------------------
+id
+event_id       UNIQUE
+app_id
+environment
+metric
+value
+timestamp
+created_at
+```
+
+Then the rule is straightforward:
+
+- same `event_id` → do not insert again
+- different `event_id` → insert as a new metric event
+
+This protects the system from double-counting when the client retries after a timeout or a network glitch.
+
+### Empty result behavior
+
+Empty aggregate results should be handled explicitly and predictably rather than as a 404.
+
+Example response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "app_id": "app-123",
+    "environment": "production",
+    "metric": "cpu_usage",
+    "from": "2026-09-01T00:00:00Z",
+    "to": "2026-09-15T00:00:00Z",
+    "count": 0,
+    "average": null,
+    "minimum": null,
+    "maximum": null
+  }
+}
+```
+
+This is preferable when the app exists conceptually but there are simply no metric events in the selected time window. A 404 is more appropriate for a missing resource, but the aggregate query is not a missing resource; it is a valid request with no matching data.
+
+### Timestamp handling
+
+The API should enforce these rules:
+
+- timestamps must be ISO-8601 and normalized to UTC
+- `from` must be less than `to`
+- future timestamps should allow a small clock-skew tolerance rather than fail immediately in all cases
+
+This keeps the system robust against imperfect client clocks while still validating clearly invalid ranges.
+
+### Observability
+
+This is a core production requirement. The service should emit structured logs instead of plain, unscoped messages.
+
+Example log entries:
+
+```text
+INFO metric_ingested app_id=app-123 metric=cpu_usage environment=production value=72.5
+INFO metrics_queried app_id=app-123 metric=cpu_usage duration_ms=12
+WARN invalid_metric_received app_id=app-123 metric=unknown
+ERROR database_write_failed app_id=app-123 metric=request_count error_code=database_error
+```
+
+The logs should include enough context to diagnose problems without exposing secrets such as database passwords or tokens. Error logs should include request identifiers, app IDs, metric names, and the relevant failure code, but never raw credentials or sensitive payload values.
+
+For health and readiness monitoring, the service should expose:
+
+- `GET /healthz` → liveness check
+- `GET /readyz` → readiness check, confirming dependencies such as the DB are reachable
+
+This is important for orchestration, deployment monitoring, and alerting.
+
+### Response design
+
+For a consistent client experience, a uniform aggregate response is useful. A good shape is:
+
+```json
+{
+  "success": true,
+  "data": {
+    "app_id": "app-123",
+    "environment": "production",
+    "metric": "request_count",
+    "from": "2026-09-01T00:00:00Z",
+    "to": "2026-09-15T00:00:00Z",
+    "count": 24,
+    "sum": 4500,
+    "average": 187.5,
+    "minimum": 100,
+    "maximum": 250
+  }
+}
+```
+
+For CPU and memory metrics, `sum` can be `null` because the business meaning is different. This gives clients one consistent structure with optional fields depending on metric type.
 
 ## Architecture
 

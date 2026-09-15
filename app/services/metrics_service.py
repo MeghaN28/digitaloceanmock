@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime
 from statistics import mean
 
@@ -6,19 +7,32 @@ from app.repositories.metrics_repository import MetricsRepository
 from app.schemas.metrics import AggregatedMetric
 
 
+@dataclass
+class IngestResult:
+    record: DeploymentMetric
+    created: bool
+
+
 class MetricsService:
     def __init__(self, repository: MetricsRepository):
         self.repository = repository
 
-    def ingest_metric(self, payload: dict) -> DeploymentMetric:
+    def ingest_metric(self, payload: dict) -> IngestResult:
+        event_id = str(payload["event_id"]).strip()
+        existing = self.repository.get_by_event_id(event_id)
+        if existing is not None:
+            return IngestResult(record=existing, created=False)
+
         metric_record = DeploymentMetric(
+            event_id=event_id,
             app_id=payload["app_id"],
             environment=payload["environment"],
             metric=payload["metric"],
             value=float(payload["value"]),
             timestamp=payload["timestamp"],
         )
-        return self.repository.create_metric(metric_record)
+        created_record = self.repository.create_metric(metric_record)
+        return IngestResult(record=created_record, created=True)
 
     def get_metrics(
         self,
@@ -53,8 +67,20 @@ class MetricsService:
             start_time=start_time,
             end_time=end_time,
         )
+
         if not metrics:
-            raise ValueError("No metrics found for the requested criteria")
+            return AggregatedMetric(
+                app_id=app_id,
+                metric=metric,
+                environment=environment,
+                from_time=start_time or datetime.min.replace(tzinfo=None),
+                to_time=end_time or datetime.min.replace(tzinfo=None),
+                count=0,
+                average=None,
+                minimum=None,
+                maximum=None,
+                total=None,
+            )
 
         values = [item.value for item in metrics]
         aggregate = AggregatedMetric(

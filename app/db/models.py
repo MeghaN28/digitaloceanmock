@@ -10,6 +10,7 @@ class DeploymentMetric(Base):
     __tablename__ = "deployment_metrics"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    event_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     app_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     environment: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     metric: Mapped[str] = mapped_column(String(64), nullable=False, index=True)

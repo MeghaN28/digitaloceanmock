@@ -8,6 +8,7 @@ VALID_ENVIRONMENTS = {"production", "staging", "development"}
 
 
 class MetricPayload(BaseModel):
+    event_id: str = Field(..., min_length=1, max_length=255)
     app_id: str = Field(..., min_length=1, max_length=255)
     environment: Literal["production", "staging", "development"]
     metric: str = Field(..., min_length=1, max_length=64)
@@ -15,6 +16,14 @@ class MetricPayload(BaseModel):
     timestamp: datetime
 
     model_config = ConfigDict(str_strip_whitespace=True)
+
+    @field_validator("event_id")
+    @classmethod
+    def validate_event_id(cls, event_id: str) -> str:
+        normalized = event_id.strip()
+        if not normalized:
+            raise ValueError("event_id cannot be blank")
+        return normalized
 
     @field_validator("metric")
     @classmethod
@@ -72,6 +81,7 @@ class MetricQuery(BaseModel):
 
 class MetricRecord(BaseModel):
     id: int
+    event_id: str
     app_id: str
     environment: str
     metric: str

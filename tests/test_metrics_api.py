@@ -30,9 +30,9 @@ def test_health_check():
 def test_required_fields_and_invalid_payloads():
     missing_fields_cases = [
         {},
-        {"app_id": "app-1", "environment": "production", "metric": "cpu_usage", "timestamp": "2026-09-15T16:00:00Z"},
-        {"app_id": "app-1", "environment": "production", "metric": "cpu_usage", "value": 50},
-        {"app_id": "app-1", "metric": "cpu_usage", "value": 50, "timestamp": "2026-09-15T16:00:00Z"},
+        {"event_id": "evt-1", "app_id": "app-1", "environment": "production", "metric": "cpu_usage", "timestamp": "2026-09-15T16:00:00Z"},
+        {"event_id": "evt-2", "app_id": "app-1", "environment": "production", "metric": "cpu_usage", "value": 50},
+        {"event_id": "evt-3", "app_id": "app-1", "metric": "cpu_usage", "value": 50, "timestamp": "2026-09-15T16:00:00Z"},
     ]
     for payload in missing_fields_cases:
         response = client.post("/v1/apps/metrics", json=payload)
@@ -43,6 +43,7 @@ def test_required_fields_and_invalid_payloads():
     invalid_env_response = client.post(
         "/v1/apps/metrics",
         json={
+            "event_id": "evt-4",
             "app_id": "app-1",
             "environment": "qa",
             "metric": "cpu_usage",
@@ -55,6 +56,7 @@ def test_required_fields_and_invalid_payloads():
     invalid_metric_response = client.post(
         "/v1/apps/metrics",
         json={
+            "event_id": "evt-5",
             "app_id": "app-1",
             "environment": "production",
             "metric": "latency",
@@ -67,6 +69,7 @@ def test_required_fields_and_invalid_payloads():
     invalid_percentage_response = client.post(
         "/v1/apps/metrics",
         json={
+            "event_id": "evt-6",
             "app_id": "app-1",
             "environment": "production",
             "metric": "memory_usage",
@@ -79,6 +82,7 @@ def test_required_fields_and_invalid_payloads():
     invalid_counter_response = client.post(
         "/v1/apps/metrics",
         json={
+            "event_id": "evt-7",
             "app_id": "app-1",
             "environment": "production",
             "metric": "request_count",
@@ -91,6 +95,7 @@ def test_required_fields_and_invalid_payloads():
 
 def test_ingest_and_fetch_metrics():
     payload = {
+        "event_id": "evt-ingest-001",
         "app_id": "app-123",
         "environment": "production",
         "metric": "cpu_usage",
@@ -119,9 +124,28 @@ def test_ingest_and_fetch_metrics():
     assert fetch_body["data"]["count"] >= 1
 
 
+def test_idempotent_ingest_reuses_same_event_id():
+    payload = {
+        "event_id": "evt-idempotency-001",
+        "app_id": "app-123",
+        "environment": "production",
+        "metric": "request_count",
+        "value": 100,
+        "timestamp": "2026-09-15T16:45:00Z",
+    }
+
+    first_response = client.post("/v1/apps/metrics", json=payload)
+    assert first_response.status_code == 201, first_response.text
+
+    duplicate_response = client.post("/v1/apps/metrics", json=payload)
+    assert duplicate_response.status_code == 200, duplicate_response.text
+    assert duplicate_response.json()["data"]["id"] == first_response.json()["data"]["id"]
+
+
 def test_metric_aggregate_and_validation():
     percentage_payloads = [
         {
+            "event_id": "evt-mem-40",
             "app_id": "app-456",
             "environment": "staging",
             "metric": "memory_usage",
@@ -129,6 +153,7 @@ def test_metric_aggregate_and_validation():
             "timestamp": "2026-09-15T10:00:00Z",
         },
         {
+            "event_id": "evt-mem-60",
             "app_id": "app-456",
             "environment": "staging",
             "metric": "memory_usage",
@@ -161,6 +186,7 @@ def test_metric_aggregate_and_validation():
 
     count_payloads = [
         {
+            "event_id": "evt-count-5",
             "app_id": "app-789",
             "environment": "production",
             "metric": "request_count",
@@ -168,6 +194,7 @@ def test_metric_aggregate_and_validation():
             "timestamp": "2026-09-15T12:00:00Z",
         },
         {
+            "event_id": "evt-count-7",
             "app_id": "app-789",
             "environment": "production",
             "metric": "request_count",
@@ -175,6 +202,7 @@ def test_metric_aggregate_and_validation():
             "timestamp": "2026-09-15T13:00:00Z",
         },
         {
+            "event_id": "evt-count-6",
             "app_id": "app-789",
             "environment": "production",
             "metric": "request_count",
@@ -214,8 +242,10 @@ def test_metric_aggregate_and_validation():
             "to": "2026-09-16T00:00:00Z",
         },
     )
-    assert no_data_response.status_code == 404
-    assert no_data_response.json()["success"] is False
+    assert no_data_response.status_code == 200
+    assert no_data_response.json()["success"] is True
+    assert no_data_response.json()["data"]["count"] == 0
+    assert no_data_response.json()["data"]["average"] is None
 
     invalid_time_range_response = client.get(
         "/v1/apps/app-123/aggregate",

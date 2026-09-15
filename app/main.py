@@ -47,6 +47,16 @@ def health_check() -> dict:
     )
 
 
+@app.get("/readyz")
+def readiness_check() -> dict:
+    try:
+        with engine.connect() as connection:
+            connection.execute("SELECT 1")
+        return build_success_response({"status": "ready", "database": "reachable"})
+    except Exception as exc:  # pragma: no cover - runtime dependency check
+        raise HTTPException(status_code=503, detail=build_error_response("Database not ready", "database_unavailable")) from exc
+
+
 from app.api.v1.routes.metrics import router as metrics_router
 
 app.include_router(metrics_router)

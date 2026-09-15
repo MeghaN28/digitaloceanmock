@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
@@ -21,13 +21,20 @@ def success_response(data):
     return {"success": True, "data": data}
 
 
-@router.post("/apps/metrics", status_code=status.HTTP_201_CREATED)
-def ingest_metric(payload: MetricPayload, service: MetricsService = Depends(get_metrics_service)):
+@router.post("/apps/metrics")
+def ingest_metric(
+    payload: MetricPayload,
+    response: Response,
+    service: MetricsService = Depends(get_metrics_service),
+):
     try:
-        record = service.ingest_metric(payload.model_dump())
+        result = service.ingest_metric(payload.model_dump())
+        response.status_code = status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
+        record = result.record
         return success_response(
             {
                 "id": record.id,
+                "event_id": record.event_id,
                 "app_id": record.app_id,
                 "environment": record.environment,
                 "metric": record.metric,
@@ -117,8 +124,6 @@ def get_application_aggregate(
     except ValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail={"message": exc.errors()[0].get("msg", "Invalid aggregate query"), "code": "aggregate_validation_error"}) from exc
     except ValueError as exc:
-        if "No metrics found" in str(exc):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"message": str(exc), "code": "aggregate_not_found"}) from exc
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail={"message": str(exc), "code": "aggregate_validation_error"}) from exc
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"message": str(exc), "code": "aggregate_error"}) from exc

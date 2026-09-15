@@ -33,7 +33,7 @@ class Settings(BaseSettings):
         if self.db_host and self.db_user and self.db_name:
             password = self.db_password or ""
             return (
-                f"postgresql://{self.db_user}:{password}@{self.db_host}:{self.db_port or 5432}/"
+                f"postgresql+psycopg://{self.db_user}:{password}@{self.db_host}:{self.db_port or 5432}/"
                 f"{self.db_name}?sslmode={self.db_sslmode}"
             )
         return self.database_url
